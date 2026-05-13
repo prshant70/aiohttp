@@ -26,24 +26,6 @@ For using pytest plugin please install pytest-aiohttp_ library:
 
    $ pip install pytest-aiohttp
 
-If you don't want to install *pytest-aiohttp* for some reason you may
-insert ``pytest_plugins = 'aiohttp.pytest_plugin'`` line into
-``conftest.py`` instead for the same functionality.
-
-
-
-Provisional Status
-~~~~~~~~~~~~~~~~~~
-
-The module is a **provisional**.
-
-*aiohttp* has a year and half period for removing deprecated API
-(:ref:`aiohttp-backward-compatibility-policy`).
-
-But for :mod:`aiohttp.test_tools` the deprecation period could be reduced.
-
-Moreover we may break *backward compatibility* without *deprecation
-period* for some very strong reason.
 
 
 The Test Client and Servers
@@ -76,7 +58,12 @@ Pytest
 The :data:`aiohttp_client` fixture available from pytest-aiohttp_ plugin
 allows you to create a client to make requests to test your app.
 
-A simple would be::
+To run these examples, you need to use `--asyncio-mode=auto` or add to your
+pytest config file::
+
+    asyncio_mode = auto
+
+A simple test would be::
 
     from aiohttp import web
 
@@ -111,11 +98,11 @@ app test client::
             body='value: {}'.format(request.app[value]).encode('utf-8'))
 
     @pytest.fixture
-    def cli(loop, aiohttp_client):
+    async def cli(aiohttp_client):
         app = web.Application()
         app.router.add_get('/', previous)
         app.router.add_post('/', previous)
-        return loop.run_until_complete(aiohttp_client(app))
+        return await aiohttp_client(app)
 
     async def test_set_value(cli):
         resp = await cli.post('/', data={'value': 'foo'})
@@ -214,22 +201,6 @@ Pytest tooling has the following fixtures:
    not provided a random unused port is used.
 
    .. versionadded:: 3.0
-
-.. data:: aiohttp_unused_port()
-
-   Function to return an unused port number for IPv4 TCP protocol::
-
-      async def test_f(aiohttp_client, aiohttp_unused_port):
-          port = aiohttp_unused_port()
-          app = web.Application()
-          # fill route table
-
-          client = await aiohttp_client(app, server_kwargs={'port': port})
-          ...
-
-   .. versionchanged:: 3.0
-
-      The fixture was renamed from ``unused_port`` to ``aiohttp_unused_port``.
 
 .. data:: aiohttp_client_cls
 
@@ -505,14 +476,12 @@ Framework Agnostic Utilities
 
 High level test creation::
 
-    from aiohttp.test_utils import TestClient, TestServer, loop_context
+    from aiohttp.test_utils import TestClient, TestServer
     from aiohttp import request
 
-    # loop_context is provided as a utility. You can use any
-    # asyncio.BaseEventLoop class in its place.
-    with loop_context() as loop:
+    async def test():
         app = _create_example_app()
-        with TestClient(TestServer(app), loop=loop) as client:
+        async with TestClient(TestServer(app)) as client:
 
             async def test_get_route():
                 nonlocal client
@@ -521,7 +490,7 @@ High level test creation::
                 text = await resp.text()
                 assert "Hello, world" in text
 
-            loop.run_until_complete(test_get_route())
+            await test_get_route()
 
 
 If it's preferred to handle the creation / teardown on a more granular
@@ -529,10 +498,10 @@ basis, the TestClient object can be used directly::
 
     from aiohttp.test_utils import TestClient, TestServer
 
-    with loop_context() as loop:
+    async def test():
         app = _create_example_app()
-        client = TestClient(TestServer(app), loop=loop)
-        loop.run_until_complete(client.start_server())
+        client = TestClient(TestServer(app))
+        await client.start_server()
         root = "http://127.0.0.1:{}".format(port)
 
         async def test_get_route():
@@ -541,12 +510,18 @@ basis, the TestClient object can be used directly::
             text = await resp.text()
             assert "Hello, world" in text
 
-        loop.run_until_complete(test_get_route())
-        loop.run_until_complete(client.close())
+        await test_get_route()
+        await client.close()
 
 
 A full list of the utilities provided can be found at the
 :data:`api reference <aiohttp.test_utils>`
+
+For end-to-end client code that talks to an external service, it is
+recommended to run a small fake server rather than patching private aiohttp
+internals. The ``examples/fake_server.py`` demo shows such an approach: start
+a local :class:`~aiohttp.web.Application`, point a custom resolver at it, and
+exercise the client against that controlled endpoint.
 
 
 Testing API Reference
@@ -566,7 +541,7 @@ Test server usually works in conjunction with
 :class:`aiohttp.test_utils.TestClient` which provides handy client methods
 for accessing to the server.
 
-.. class:: BaseTestServer(*, scheme='http', host='127.0.0.1', port=None, socket_factory=get_port_socket)
+.. class:: BaseTestServer(*, scheme='http', host='127.0.0.1', port=None, socket_factory=...)
 
    Base class for test servers.
 
@@ -799,70 +774,6 @@ Test Client
       Initiate websocket connection.
 
       The api corresponds to :meth:`aiohttp.ClientSession.ws_connect`.
-
-
-Utilities
-~~~~~~~~~
-
-.. function:: make_mocked_coro(return_value)
-
-  Creates a coroutine mock.
-
-  Behaves like a coroutine which returns *return_value*.  But it is
-  also a mock object, you might test it as usual
-  :class:`~unittest.mock.Mock`::
-
-      mocked = make_mocked_coro(1)
-      assert 1 == await mocked(1, 2)
-      mocked.assert_called_with(1, 2)
-
-
-  :param return_value: A value that the the mock object will return when
-      called.
-  :returns: A mock object that behaves as a coroutine which returns
-      *return_value* when called.
-
-
-.. function:: unused_port()
-
-   Return an unused port number for IPv4 TCP protocol.
-
-   :return int: ephemeral port number which could be reused by test server.
-
-.. function:: loop_context(loop_factory=<function asyncio.new_event_loop>)
-
-   A contextmanager that creates an event_loop, for test purposes.
-
-   Handles the creation and cleanup of a test loop.
-
-.. function:: setup_test_loop(loop_factory=<function asyncio.new_event_loop>)
-
-   Create and return an :class:`asyncio.AbstractEventLoop` instance.
-
-   The caller should also call teardown_test_loop, once they are done
-   with the loop.
-
-   .. note::
-
-      As side effect the function changes asyncio *default loop* by
-      :func:`asyncio.set_event_loop` call.
-
-      Previous default loop is not restored.
-
-      It should not be a problem for test suite: every test expects a
-      new test loop instance anyway.
-
-   .. versionchanged:: 3.1
-
-      The function installs a created event loop as *default*.
-
-.. function:: teardown_test_loop(loop)
-
-   Teardown and cleanup an event_loop created by setup_test_loop.
-
-   :param loop: the loop to teardown
-   :type loop: asyncio.AbstractEventLoop
-
 
 
 .. _pytest: http://pytest.org/latest/
